@@ -5,7 +5,7 @@ Drupal is an open-source content management framework written in the PHP server-
 The two code sets used by every Drupal site: the codebase and the database. The codebase is the set of files that make up Drupal itself, along with any themes, modules, or libraries you've added. The database is where Drupal stores most of its configuration and all of its content. These infrastructure requirements are satisfied by the follwoing Azure services
 
 - [Azure Container Apps (ACA)](https://learn.microsoft.com/en-us/azure/container-apps/overview) for hosting Drupal application
-- [Azure Database for MariaDB](https://learn.microsoft.com/en-us/azure/mariadb/overview) for hosting Drupal database
+- [Azure Database for MySQL](https://learn.microsoft.com/en-us/azure/mysql/flexible-server/overview) for hosting Drupal database
 - [Azure Files](https://learn.microsoft.com/en-us/azure/storage/files/storage-files-introduction) for hosting Drupal files
 
 ![Solution Architecture](/solution-architecture.png)
@@ -25,7 +25,7 @@ az login
 ```bash
 export RESOURCE_GROUP="my-drupal-apps-group"
 export ENVIRONMENT_NAME="my-drupal-storage-environment"
-export LOCATION="eastus"
+export LOCATION="eastus2"
 ```
 
 * Ensure you have the latest version of the Container Apps Azure CLI extension.
@@ -146,41 +146,47 @@ az containerapp env storage set \
   --output table
 ```
 
-## Create Azure Database for MariaDB
+## Create Azure Database for MySQL
 
 * Drupal DB Settings
 
 ```bash
 export DB_SERVER_NAME=drupal-db-srv-$RAND  # Must be globally unique, ie: 'drupal-db-srv-<unique>'
-export DRUPAL_DB_HOST=$DB_SERVER_NAME.mariadb.database.azure.com
-export DB_SERVER_SKU=GP_Gen5_2 # Azure Database for MariaDB SKU
+export DRUPAL_DB_HOST=$DB_SERVER_NAME.mysql.database.azure.com
+export DB_SERVER_SKU=Standard_B1ms # Azure Database for MySQL SKU
 export DRUPAL_DB_USER=myAdmin  # Cannot be 'admin'.
 export DRUPAL_DB_PASSWORD=Zx3$RAND # Must include uppercase, lowercase, and numeric
 export DRUPAL_DB_NAME=drupal_db
 ```
-
-* Create a MariaDB Server
+* Create a MySQL DB Server
 
 ```bash
-az mariadb server create --name $DB_SERVER_NAME \
+az mysql flexible-server create --name $DB_SERVER_NAME \
     --location $LOCATION --resource-group $RESOURCE_GROUP \
-    --sku-name $DB_SERVER_SKU --ssl-enforcement Disabled \
-    --version 10.3 --admin-user $DRUPAL_DB_USER \
-    --admin-password $DRUPAL_DB_PASSWORD --output none
+    --sku-name $DB_SERVER_SKU --version 8.0.21 \
+    --admin-user $DRUPAL_DB_USER --admin-password $DRUPAL_DB_PASSWORD \
+    --public-access 0.0.0.0 --output none
+```
+
+* Disable the Require Secure Transport
+
+```bash
+az mysql flexible-server parameter set --resource-group $RESOURCE_GROUP \
+    --server-name $DB_SERVER_NAME --name "require_secure_transport" --value "OFF"
 ```
 
 * Enable Azure services (ie: Web App) to connect to the server.
 
 ```bash
-az mariadb server firewall-rule create --name AllowAllWindowsAzureIps \
-    --resource-group $RESOURCE_GROUP --server-name $DB_SERVER_NAME \
-    --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 --output none
+az mysql flexible-server firewall-rule create --rule-name AllowAllWindowsAzureIps \
+    --resource-group $RESOURCE_GROUP --name $DB_SERVER_NAME \
+    --start-ip-address 0.0.0.0 --end-ip-address 255.255.255.255 
 ```
 
 * Create a blank DB for Drupal (Drupal's initialization process expects it to already exist and be empty.)
 
 ```bash
-az mariadb db create --name $DRUPAL_DB_NAME --server-name $DB_SERVER_NAME \
+az mysql flexible-server db create --database-name $DRUPAL_DB_NAME --server-name $DB_SERVER_NAME \
     --resource-group $RESOURCE_GROUP --output none
 ```
 
@@ -219,7 +225,7 @@ ingress:
   external: true
 ```
 
-* Execute the bash script to create a new yaml file `drupal-aca-DoNotCheckIn.yaml` with the updated values. Make sure not to check in this file to source control.
+* Execute the bash script to create a new yaml file `drupal-aca-DoNotCheckIn.yaml` with the updated values. 
 
 ```bash
 chmod +x update-yaml.sh
